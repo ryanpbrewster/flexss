@@ -1,14 +1,17 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-struct TenantId(u64);
+pub struct TenantId(pub u64);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-struct BackendId(u64);
+pub struct BackendId(pub u64);
 
-trait Picker {
+pub trait Picker {
+    fn new(shard_size: usize) -> Self;
     fn add_backend(&mut self, id: BackendId);
     fn remove_backend(&mut self, id: BackendId);
     fn pick(&mut self, id: TenantId) -> Option<BackendId>;
 }
+
+pub mod naive_shuffle;
 
 #[cfg(test)]
 mod test {
@@ -22,41 +25,6 @@ mod test {
         assert_eq!(2 + 2, 4);
     }
 
-    struct Oracle {
-        backends: BTreeSet<BackendId>,
-        shard_size: usize,
-        prng: SmallRng,
-    }
-    impl Oracle {
-        fn new(shard_size: usize) -> Self {
-            Self {
-                shard_size,
-                backends: BTreeSet::default(),
-                prng: SmallRng::seed_from_u64(42),
-            }
-        }
-    }
-    impl Picker for Oracle {
-        fn add_backend(&mut self, id: BackendId) {
-            self.backends.insert(id);
-        }
-
-        fn remove_backend(&mut self, id: BackendId) {
-            self.backends.remove(&id);
-        }
-
-        fn pick(&mut self, id: TenantId) -> Option<BackendId> {
-            let mut all_backends: Vec<BackendId> = self.backends.iter().copied().collect();
-            let (shuffled, _remainder) = {
-                let mut prng = SmallRng::seed_from_u64(id.0);
-                all_backends.partial_shuffle(&mut prng, self.shard_size)
-            };
-
-            // Note: different RNG! This one is not determinstic based on the tenant id.
-            shuffled.choose(&mut self.prng).copied()
-        }
-    }
-
     #[test]
     fn oracle_smoke() {
         let mut oracle = Oracle::new(3);
@@ -67,7 +35,7 @@ mod test {
     }
 
     #[test]
-    fn oracle_statistics() {
+    fn oracle_load_balancing() {
         let mut oracle = Oracle::new(3);
         for i in 0..10 {
             oracle.add_backend(BackendId(i));
@@ -82,6 +50,33 @@ mod test {
         assert_eq!(
             tally.values().copied().collect::<Vec<_>>(),
             vec![325, 343, 332]
+        );
+    }
+
+    #[test]
+    fn oracle_tenant_isolation() {
+        let mut oracle = Oracle::new(3);
+        for i in 0..10 {
+            oracle.add_backend(BackendId(i));
+        }
+
+        let mut mk_tally = |tenant: TenantId| -> BTreeMap<BackendId, usize> {
+            let mut tally = BTreeMap::new();
+            for _ in 0..1_000 {
+                let choice = oracle.pick(tenant).unwrap();
+                *tally.entry(choice).or_default() += 1;
+            }
+            tally
+        };
+
+        // tenants 1 and 2 only overlap on a single backend: 7
+        assert_eq!(
+            mk_tally(TenantId(1)).keys().copied().collect::<Vec<_>>(),
+            vec![BackendId(0), BackendId(1), BackendId(7)]
+        );
+        assert_eq!(
+            mk_tally(TenantId(2)).keys().copied().collect::<Vec<_>>(),
+            vec![BackendId(2), BackendId(7), BackendId(9)]
         );
     }
 }
