@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use flexss::{
-    self, block_picker::BlockPicker, naive_shuffle::NaiveShuffle, BackendId, Picker, TenantId,
+    self, block_picker::BlockPicker, naive_shuffle::NaiveShuffle, BackendId, Health, Picker,
+    TenantId,
 };
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 fn main() {
@@ -28,7 +29,7 @@ fn quantify_load_balancing<P: Picker>() -> f64 {
     let num_backends = 10;
     let mut p = P::new(3);
     for i in 0..num_backends {
-        p.register(BackendId(i as u64));
+        p.register(BackendId(i as u64), Health::Up);
     }
 
     let mut tally: Vec<usize> = vec![0; num_backends];
@@ -55,7 +56,7 @@ fn quantify_tenant_isolation<P: Picker>() -> Vec<f64> {
     let shard_size = 3;
     let mut oracle = P::new(shard_size);
     for i in 0..100 {
-        oracle.register(BackendId(i));
+        oracle.register(BackendId(i), Health::Up);
     }
 
     let num_tenants = 100;

@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
-use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng, Rng};
-
-use crate::{BackendId, Picker, TenantId, Backend, Health};
+use crate::{Backend, BackendId, Health, Picker, TenantId};
 
 pub struct NaiveShuffle {
     backends: Vec<Backend>,
@@ -34,15 +32,15 @@ impl Picker for NaiveShuffle {
         if self.backends.is_empty() {
             return None;
         }
-        let mut all_backends: Vec<Backend> = self.backends.iter().cloned().collect();
+        let mut all_backends: Vec<Backend> = self.backends.clone();
         let (shuffled, _remainder) = {
             let mut prng = SmallRng::seed_from_u64(id.0);
             all_backends.partial_shuffle(&mut prng, self.shard_size)
         };
 
         // Note: different RNG! This one is not determinstic based on the tenant id.
-        let idx = self.prng.gen_range(0 .. self.shard_size);
-        for i in 0 .. self.shard_size {
+        let idx = self.prng.gen_range(0..self.shard_size);
+        for i in 0..self.shard_size {
             let b = shuffled[(idx + i) % shuffled.len()];
             if b.health == Health::Up {
                 return Some(b.id);

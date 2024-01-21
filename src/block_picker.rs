@@ -1,6 +1,6 @@
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use crate::{BackendId, Picker, TenantId, Health, Backend};
+use crate::{Backend, BackendId, Health, Picker, TenantId};
 
 pub struct BlockPicker {
     backends: Vec<Backend>,
@@ -34,7 +34,7 @@ impl Picker for BlockPicker {
             return None;
         }
         let bucket = self.prng.gen_range(0..self.shard_size);
-        for i in 0 .. self.shard_size {
+        for i in 0..self.shard_size {
             let bucket = (bucket + i) % self.shard_size;
             // Note: different RNG! This one is determinstic based on the tenant id and bucket.
             let mut prng = SmallRng::seed_from_u64(id.0 ^ bucket as u64);

@@ -51,7 +51,7 @@ impl Picker for RoundRobin {
         if self.backends.is_empty() {
             return None;
         }
-        for _ in 0 .. self.backends.len() {
+        for _ in 0..self.backends.len() {
             self.idx = (self.idx + 1) % self.backends.len();
             let b = self.backends[self.idx];
             if b.health != Health::Up {
