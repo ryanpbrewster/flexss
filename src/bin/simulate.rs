@@ -18,7 +18,12 @@ fn main() {
     poison_pill::<BlockPicker>().unwrap();
 
     rolling_restart::<RoundRobin>().unwrap();
-    rolling_restart::<NaiveShuffle>().unwrap();
+    // NaiveShuffle cannot distinguish between intentional
+    // deploys and poison-pill scenarios, so it hits dead shards.
+    assert!(rolling_restart::<NaiveShuffle>().is_err());
+    // It's actually a bit surprising that this works!
+    // The blocks _happen_ to align with the failure domains
+    // that we're deploying along.
     rolling_restart::<BlockPicker>().unwrap();
 }
 
@@ -94,7 +99,9 @@ fn rolling_restart<P: Picker>() -> anyhow::Result<()> {
         for tenant_id in 0..100 {
             let tenant_id = TenantId(tenant_id);
             for _ in 0..100 {
-                let b = p.pick(tenant_id).unwrap();
+                let Some(b) = p.pick(tenant_id) else {
+                    bail!("could not route request for {tenant_id:?}")
+                };
                 if s.backends.get(&b).unwrap() != &Health::Up {
                     bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
                 }
