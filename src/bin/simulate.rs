@@ -4,13 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flexss::{
     block_picker::BlockPicker, drain_aware_shuffle::DrainAwareShuffle, naive_shuffle::NaiveShuffle,
-    BackendId, Health, Picker, RoundRobin, TenantId,
+    BackendId, Health, Picker, RoundRobin, TenantId, rendevouz::Rendevouz,
 };
 
 fn main() {
     health_aware::<RoundRobin>().unwrap();
     health_aware::<NaiveShuffle>().unwrap();
     health_aware::<BlockPicker>().unwrap();
+    health_aware::<Rendevouz>().unwrap();
 
     // RoundRobin is succeptible to poison pill tenants
     assert!(poison_pill::<RoundRobin>().is_err());
@@ -18,6 +19,7 @@ fn main() {
     poison_pill::<NaiveShuffle>().unwrap();
     poison_pill::<DrainAwareShuffle>().unwrap();
     poison_pill::<BlockPicker>().unwrap();
+    poison_pill::<Rendevouz>().unwrap();
 
     unaligned_rolling_restart::<RoundRobin>().unwrap();
     // NaiveShuffle cannot distinguish between intentional
@@ -30,6 +32,7 @@ fn main() {
     // are aligned with the deploys, the BlockPicker
     // will hit dead shards.
     assert!(unaligned_rolling_restart::<BlockPicker>().is_err());
+    unaligned_rolling_restart::<Rendevouz>().unwrap();
 
     // RoundRobin always hits a ton of backends
     assert!(rolling_restart_blast_radius::<RoundRobin>().is_err());
@@ -39,12 +42,22 @@ fn main() {
     // The drain-aware shuffle picker can deal with lots of unhealthy backends,
     // but the cost is that it sprawls.
     assert!(rolling_restart_blast_radius::<DrainAwareShuffle>().is_err());
+    rolling_restart_blast_radius::<Rendevouz>().unwrap();
 
     // Every one of these struggles with a quick recycling
     assert!(recycle_blast_radius::<RoundRobin>().is_err());
     assert!(recycle_blast_radius::<NaiveShuffle>().is_err());
     assert!(recycle_blast_radius::<DrainAwareShuffle>().is_err());
     assert!(recycle_blast_radius::<BlockPicker>().is_err());
+    // But rendevouz hashing (and other consistent hashing approaches)
+    // have a very limited blast radius even when the underlying fleet
+    // changes.
+    recycle_blast_radius::<Rendevouz>().unwrap();
+
+    load_distribution::<RoundRobin>().unwrap();
+    load_distribution::<NaiveShuffle>().unwrap();
+    load_distribution::<BlockPicker>().unwrap();
+    assert!(load_distribution::<Rendevouz>().is_err());
 }
 
 #[derive(Default)]
@@ -90,6 +103,38 @@ fn poison_pill<P: Picker>() -> anyhow::Result<()> {
 
     if s.backends.values().filter(|&&h| h == Health::Down).count() == s.backends.len() {
         bail!("a single tenant poisoned all backends");
+    }
+    Ok(())
+}
+
+fn load_distribution<P: Picker>() -> anyhow::Result<()> {
+    // We are going to have 30 backends and 30 tenants, and we want to
+    // ensure that every backend receives some reasonable fraction of load.
+    let mut s = Simulation::default();
+    let mut p = P::new(5);
+    let backends: Vec<BackendId> = (0 .. 30).map(BackendId).collect();
+    for &b in &backends {
+        s.backends.insert(b, Health::Up);
+        p.register(b, Health::Up);
+    }
+
+    let mut tally: BTreeMap<BackendId, usize> = BTreeMap::new();
+    let tenants: Vec<TenantId> = (0 .. 30).map(TenantId).collect();
+    let num_requests = 100;
+    for &tenant_id in &tenants {
+        for _ in 0..num_requests {
+            let b = p.pick(tenant_id).unwrap();
+            *tally.entry(b).or_default() += 1;
+        }
+    }
+
+    // Ensure that all backends receive at least 20% of their fair share
+    let fair = tenants.len() * num_requests / backends.len();
+    for &b in &backends {
+        let recv = tally.get(&b).copied().unwrap_or_default();
+        if recv < fair / 5 {
+            bail!("{b:?} received {recv} which is less than 20% of {fair}");
+        }
     }
     Ok(())
 }

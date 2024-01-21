@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
 pub struct TenantId(pub u64);
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
@@ -66,3 +66,4 @@ impl Picker for RoundRobin {
 pub mod block_picker;
 pub mod drain_aware_shuffle;
 pub mod naive_shuffle;
+pub mod rendevouz;
