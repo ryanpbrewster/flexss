@@ -1,9 +1,9 @@
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use crate::{BackendId, Picker, TenantId};
+use crate::{BackendId, Picker, TenantId, Health, Backend};
 
 pub struct BlockPicker {
-    backends: Vec<BackendId>,
+    backends: Vec<Backend>,
     shard_size: usize,
     prng: SmallRng,
 }
@@ -15,13 +15,17 @@ impl Picker for BlockPicker {
             prng: SmallRng::seed_from_u64(42),
         }
     }
-    fn add_backend(&mut self, id: BackendId) {
-        self.backends.push(id);
-        self.backends.sort();
+    fn register(&mut self, id: BackendId, health: Health) {
+        if let Some(existing) = self.backends.iter_mut().find(|b| b.id == id) {
+            existing.health = health;
+        } else {
+            self.backends.push(Backend { id, health });
+            self.backends.sort();
+        }
     }
 
-    fn remove_backend(&mut self, id: BackendId) {
-        self.backends.retain(|&v| v != id);
+    fn unregister(&mut self, id: BackendId) {
+        self.backends.retain(|b| b.id != id);
     }
 
     fn pick(&mut self, id: TenantId) -> Option<BackendId> {
@@ -30,10 +34,16 @@ impl Picker for BlockPicker {
             return None;
         }
         let bucket = self.prng.gen_range(0..self.shard_size);
-
-        // Note: different RNG! This one is determinstic based on the tenant id and bucket.
-        let mut prng = SmallRng::seed_from_u64(id.0 ^ bucket as u64);
-        let slot = prng.gen_range(0..bucket_size);
-        Some(self.backends[bucket * bucket_size + slot])
+        for i in 0 .. self.shard_size {
+            let bucket = (bucket + i) % self.shard_size;
+            // Note: different RNG! This one is determinstic based on the tenant id and bucket.
+            let mut prng = SmallRng::seed_from_u64(id.0 ^ bucket as u64);
+            let slot = prng.gen_range(0..bucket_size);
+            let b = self.backends[bucket * bucket_size + slot];
+            if b.health == Health::Up {
+                return Some(b.id);
+            }
+        }
+        None
     }
 }

@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng, Rng};
 
-use crate::{BackendId, Picker, TenantId};
+use crate::{BackendId, Picker, TenantId, Backend, Health};
 
 pub struct NaiveShuffle {
-    backends: BTreeSet<BackendId>,
+    backends: Vec<Backend>,
     shard_size: usize,
     prng: SmallRng,
 }
@@ -13,26 +13,41 @@ impl Picker for NaiveShuffle {
     fn new(shard_size: usize) -> Self {
         Self {
             shard_size,
-            backends: BTreeSet::default(),
+            backends: Vec::new(),
             prng: SmallRng::seed_from_u64(42),
         }
     }
-    fn add_backend(&mut self, id: BackendId) {
-        self.backends.insert(id);
+    fn register(&mut self, id: BackendId, health: Health) {
+        if let Some(existing) = self.backends.iter_mut().find(|b| b.id == id) {
+            existing.health = health;
+        } else {
+            self.backends.push(Backend { id, health });
+            self.backends.sort();
+        }
     }
 
-    fn remove_backend(&mut self, id: BackendId) {
-        self.backends.remove(&id);
+    fn unregister(&mut self, id: BackendId) {
+        self.backends.retain(|b| b.id != id);
     }
 
     fn pick(&mut self, id: TenantId) -> Option<BackendId> {
-        let mut all_backends: Vec<BackendId> = self.backends.iter().copied().collect();
+        if self.backends.is_empty() {
+            return None;
+        }
+        let mut all_backends: Vec<Backend> = self.backends.iter().cloned().collect();
         let (shuffled, _remainder) = {
             let mut prng = SmallRng::seed_from_u64(id.0);
             all_backends.partial_shuffle(&mut prng, self.shard_size)
         };
 
         // Note: different RNG! This one is not determinstic based on the tenant id.
-        shuffled.choose(&mut self.prng).copied()
+        let idx = self.prng.gen_range(0 .. self.shard_size);
+        for i in 0 .. self.shard_size {
+            let b = shuffled[(idx + i) % shuffled.len()];
+            if b.health == Health::Up {
+                return Some(b.id);
+            }
+        }
+        None
     }
 }
