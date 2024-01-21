@@ -1,5 +1,4 @@
-
-use rand::{rngs::SmallRng, SeedableRng, Rng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{BackendId, Picker, TenantId};
 

@@ -11,5 +11,5 @@ pub trait Picker {
     fn pick(&mut self, id: TenantId) -> Option<BackendId>;
 }
 
-pub mod naive_shuffle;
 pub mod block_picker;
+pub mod naive_shuffle;
