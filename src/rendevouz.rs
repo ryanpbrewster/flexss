@@ -1,7 +1,9 @@
-use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
-use crate::{Backend, Picker, BackendId, Health, TenantId};
-
+use crate::{Backend, BackendId, Health, Picker, TenantId};
 
 pub struct Rendevouz {
     backends: Vec<Backend>,
@@ -25,11 +27,15 @@ impl Picker for Rendevouz {
     }
 
     fn pick(&mut self, id: TenantId) -> Option<BackendId> {
-        self.backends.iter().filter(|b| b.health == Health::Up).max_by_key(|b| {
-            let mut h = DefaultHasher::new();
-            id.hash(&mut h);
-            b.id.hash(&mut h);
-            h.finish()
-        }).map(|b| b.id)
+        self.backends
+            .iter()
+            .filter(|b| b.health == Health::Up)
+            .max_by_key(|b| {
+                let mut h = DefaultHasher::new();
+                id.hash(&mut h);
+                b.id.hash(&mut h);
+                h.finish()
+            })
+            .map(|b| b.id)
     }
 }

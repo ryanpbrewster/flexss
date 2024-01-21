@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flexss::{
     block_picker::BlockPicker, drain_aware_shuffle::DrainAwareShuffle, naive_shuffle::NaiveShuffle,
-    BackendId, Health, Picker, RoundRobin, TenantId, rendevouz::Rendevouz,
+    rendevouz::Rendevouz, BackendId, Health, Picker, RoundRobin, TenantId,
 };
 
 fn main() {
@@ -19,7 +19,8 @@ fn main() {
     poison_pill::<NaiveShuffle>().unwrap();
     poison_pill::<DrainAwareShuffle>().unwrap();
     poison_pill::<BlockPicker>().unwrap();
-    poison_pill::<Rendevouz>().unwrap();
+    // Rendevouz hashing lets one backend murder everything
+    assert!(poison_pill::<Rendevouz>().is_err());
 
     unaligned_rolling_restart::<RoundRobin>().unwrap();
     // NaiveShuffle cannot distinguish between intentional
@@ -97,8 +98,9 @@ fn poison_pill<P: Picker>() -> anyhow::Result<()> {
 
     // Tenant 0 poisons backends
     for _ in 0..1_000 {
-        let b = p.pick(TenantId(0)).unwrap();
+        let Some(b) = p.pick(TenantId(0)) else { break };
         *s.backends.get_mut(&b).unwrap() = Health::Down;
+        p.register(b, Health::Down);
     }
 
     if s.backends.values().filter(|&&h| h == Health::Down).count() == s.backends.len() {
@@ -112,14 +114,14 @@ fn load_distribution<P: Picker>() -> anyhow::Result<()> {
     // ensure that every backend receives some reasonable fraction of load.
     let mut s = Simulation::default();
     let mut p = P::new(5);
-    let backends: Vec<BackendId> = (0 .. 30).map(BackendId).collect();
+    let backends: Vec<BackendId> = (0..30).map(BackendId).collect();
     for &b in &backends {
         s.backends.insert(b, Health::Up);
         p.register(b, Health::Up);
     }
 
     let mut tally: BTreeMap<BackendId, usize> = BTreeMap::new();
-    let tenants: Vec<TenantId> = (0 .. 30).map(TenantId).collect();
+    let tenants: Vec<TenantId> = (0..30).map(TenantId).collect();
     let num_requests = 100;
     for &tenant_id in &tenants {
         for _ in 0..num_requests {
