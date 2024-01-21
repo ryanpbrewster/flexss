@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use flexss::{self, naive_shuffle::NaiveShuffle, BackendId, Picker, TenantId};
+use flexss::{self, naive_shuffle::NaiveShuffle, BackendId, Picker, TenantId, block_picker::BlockPicker};
 fn main() {
     println!(
         "[NaiveShuffle] Load Balancing: {}",
@@ -9,6 +9,15 @@ fn main() {
     println!(
         "[NaiveShuffle] Tenant Isolation: {}",
         quantify_tenant_isolation::<NaiveShuffle>()
+    );
+
+    println!(
+        "[BlockPicker] Load Balancing: {}",
+        quantify_load_balancing::<BlockPicker>()
+    );
+    println!(
+        "[BlockPicker] Tenant Isolation: {}",
+        quantify_tenant_isolation::<BlockPicker>()
     );
 }
 
@@ -24,10 +33,6 @@ fn quantify_load_balancing<P: Picker>() -> f64 {
         *tally.entry(choice).or_default() += 1;
     }
     // The shard size is 3. The picker should exercise the whole thing, but never go outside.
-    assert_eq!(
-        tally.values().copied().collect::<Vec<_>>(),
-        vec![325, 343, 332]
-    );
     assert_eq!(tally.len(), 3);
     1.0 - (tally.values().copied().max().unwrap() - tally.values().copied().min().unwrap()) as f64
         / 1_000.0
@@ -36,7 +41,7 @@ fn quantify_load_balancing<P: Picker>() -> f64 {
 fn quantify_tenant_isolation<P: Picker>() -> usize {
     let shard_size = 3;
     let mut oracle = P::new(shard_size);
-    for i in 0..10 {
+    for i in 0..100 {
         oracle.add_backend(BackendId(i));
     }
 

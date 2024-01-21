@@ -12,3 +12,4 @@ pub trait Picker {
 }
 
 pub mod naive_shuffle;
+pub mod block_picker;
