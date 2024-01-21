@@ -64,4 +64,5 @@ impl Picker for RoundRobin {
 }
 
 pub mod block_picker;
+pub mod drain_aware_shuffle;
 pub mod naive_shuffle;

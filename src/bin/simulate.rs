@@ -1,9 +1,10 @@
 use anyhow::bail;
-use std::collections::BTreeMap;
+use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
+use std::collections::{BTreeMap, BTreeSet};
 
 use flexss::{
-    block_picker::BlockPicker, naive_shuffle::NaiveShuffle, BackendId, Health, Picker, RoundRobin,
-    TenantId,
+    block_picker::BlockPicker, drain_aware_shuffle::DrainAwareShuffle, naive_shuffle::NaiveShuffle,
+    BackendId, Health, Picker, RoundRobin, TenantId,
 };
 
 fn main() {
@@ -15,16 +16,29 @@ fn main() {
     assert!(poison_pill::<RoundRobin>().is_err());
     // These pickers all prevent poison pills at steady state
     poison_pill::<NaiveShuffle>().unwrap();
+    poison_pill::<DrainAwareShuffle>().unwrap();
     poison_pill::<BlockPicker>().unwrap();
 
-    rolling_restart::<RoundRobin>().unwrap();
+    unaligned_rolling_restart::<RoundRobin>().unwrap();
     // NaiveShuffle cannot distinguish between intentional
     // deploys and poison-pill scenarios, so it hits dead shards.
-    assert!(rolling_restart::<NaiveShuffle>().is_err());
-    // It's actually a bit surprising that this works!
-    // The blocks _happen_ to align with the failure domains
-    // that we're deploying along.
-    rolling_restart::<BlockPicker>().unwrap();
+    assert!(unaligned_rolling_restart::<NaiveShuffle>().is_err());
+    // Making the picker aware of drains allows it to work with
+    // intentional deploys.
+    unaligned_rolling_restart::<DrainAwareShuffle>().unwrap();
+    // Without some way to guarantee that the blocks
+    // are aligned with the deploys, the BlockPicker
+    // will hit dead shards.
+    assert!(unaligned_rolling_restart::<BlockPicker>().is_err());
+
+    // RoundRobin always hits a ton of backends
+    assert!(rolling_restart_blast_radius::<RoundRobin>().is_err());
+    // NaiveShuffle is good at dealing with ephemeral downtime
+    rolling_restart_blast_radius::<NaiveShuffle>().unwrap();
+    rolling_restart_blast_radius::<BlockPicker>().unwrap();
+    // The drain-aware shuffle picker can deal with lots of unhealthy backends,
+    // but the cost is that it sprawls.
+    assert!(rolling_restart_blast_radius::<DrainAwareShuffle>().is_err());
 }
 
 #[derive(Default)]
@@ -74,24 +88,26 @@ fn poison_pill<P: Picker>() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn rolling_restart<P: Picker>() -> anyhow::Result<()> {
+fn unaligned_rolling_restart<P: Picker>() -> anyhow::Result<()> {
     let mut s = Simulation::default();
     let mut p = P::new(5);
-    let num_backends = 30;
-    for i in 0..num_backends {
-        s.backends.insert(BackendId(i), Health::Up);
-        p.register(BackendId(i), Health::Up);
+    let mut backends: Vec<BackendId> = (0..30).map(BackendId).collect();
+    for &b in &backends {
+        s.backends.insert(b, Health::Up);
+        p.register(b, Health::Up);
     }
 
     // Restart 33% of the fleet at a time.
-    assert!(num_backends % 3 == 0); // just for simplicity, ensure we can process evenly in thirds
-    let stage_size = num_backends / 3;
-    for stage in 0..3 {
-        let backends: Vec<BackendId> = (0..stage_size)
-            .map(|i| BackendId(stage * stage_size + i))
-            .collect();
+    assert!(backends.len() % 3 == 0); // just for simplicity, ensure we can process evenly in thirds
+    let stage_size = backends.len() / 3;
+    let stages = {
+        let mut prng = SmallRng::seed_from_u64(42);
+        backends.shuffle(&mut prng);
+        backends.windows(stage_size)
+    };
+    for stage in stages {
         // mark all of this stage's backends as draining
-        for &b in &backends {
+        for &b in stage {
             *s.backends.get_mut(&b).unwrap() = Health::Draining;
             p.register(b, Health::Draining);
         }
@@ -113,6 +129,59 @@ fn rolling_restart<P: Picker>() -> anyhow::Result<()> {
             *s.backends.get_mut(&b).unwrap() = Health::Up;
             p.register(b, Health::Up);
         }
+    }
+    Ok(())
+}
+
+fn rolling_restart_blast_radius<P: Picker>() -> anyhow::Result<()> {
+    let mut s = Simulation::default();
+    let mut p = P::new(6);
+    let backends: Vec<BackendId> = (0..30).map(BackendId).collect();
+    for &b in &backends {
+        s.backends.insert(b, Health::Up);
+        p.register(b, Health::Up);
+    }
+
+    // Suppose we deploy to the entire fleet?
+    // How many distinct backends will a single tenant hit over the course
+    // of that deploy?
+    let tenant_id = TenantId(0);
+    let mut touched = BTreeSet::new();
+    for stage in backends.windows(5) {
+        // drain backends
+        for &b in stage {
+            *s.backends.get_mut(&b).unwrap() = Health::Draining;
+            p.register(b, Health::Draining);
+
+            for _ in 0..10 {
+                let Some(choice) = p.pick(tenant_id) else {
+                    bail!("could not route request for {tenant_id:?}")
+                };
+                if s.backends.get(&choice).unwrap() != &Health::Up {
+                    bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
+                }
+                touched.insert(choice);
+            }
+        }
+        // undrain backends
+        for &b in stage {
+            *s.backends.get_mut(&b).unwrap() = Health::Up;
+            p.register(b, Health::Up);
+
+            for _ in 0..10 {
+                let Some(choice) = p.pick(tenant_id) else {
+                    bail!("could not route request for {tenant_id:?}")
+                };
+                if s.backends.get(&choice).unwrap() != &Health::Up {
+                    bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
+                }
+                touched.insert(choice);
+            }
+        }
+    }
+
+    if touched.len() > backends.len() / 2 {
+        bail!("over the course of the deploy, tenant 0 sprawled out to more than half of all backends");
     }
     Ok(())
 }
