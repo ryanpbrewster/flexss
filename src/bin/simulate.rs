@@ -39,6 +39,12 @@ fn main() {
     // The drain-aware shuffle picker can deal with lots of unhealthy backends,
     // but the cost is that it sprawls.
     assert!(rolling_restart_blast_radius::<DrainAwareShuffle>().is_err());
+
+    // Every one of these struggles with a quick recycling
+    assert!(recycle_blast_radius::<RoundRobin>().is_err());
+    assert!(recycle_blast_radius::<NaiveShuffle>().is_err());
+    assert!(recycle_blast_radius::<DrainAwareShuffle>().is_err());
+    assert!(recycle_blast_radius::<BlockPicker>().is_err());
 }
 
 #[derive(Default)]
@@ -182,6 +188,60 @@ fn rolling_restart_blast_radius<P: Picker>() -> anyhow::Result<()> {
 
     if touched.len() > backends.len() / 2 {
         bail!("over the course of the deploy, tenant 0 sprawled out to more than half of all backends");
+    }
+    Ok(())
+}
+
+fn recycle_blast_radius<P: Picker>() -> anyhow::Result<()> {
+    let mut s = Simulation::default();
+    let mut p = P::new(6);
+    let fleet_size: usize = 30;
+    let before_backends: Vec<BackendId> = (0..fleet_size).map(|i| BackendId(i as u64)).collect();
+    let after_backends: Vec<BackendId> = (0..fleet_size)
+        .map(|i| BackendId(fleet_size as u64 + i as u64))
+        .collect();
+    for &b in &before_backends {
+        s.backends.insert(b, Health::Up);
+        p.register(b, Health::Up);
+    }
+
+    // Suppose we _recycle_ the entire fleet?
+    // How many distinct backends will a single tenant hit over the course
+    // of that cycling?
+    let tenant_id = TenantId(0);
+    let mut touched = BTreeSet::new();
+    for i in 0..before_backends.len() {
+        // spin up new backend
+        s.backends.insert(after_backends[i], Health::Up);
+        p.register(after_backends[i], Health::Up);
+
+        for _ in 0..10 {
+            let Some(choice) = p.pick(tenant_id) else {
+                bail!("could not route request for {tenant_id:?}")
+            };
+            if s.backends.get(&choice).unwrap() != &Health::Up {
+                bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
+            }
+            touched.insert(choice);
+        }
+
+        // spin down old backend
+        s.backends.remove(&before_backends[i]).unwrap();
+        p.unregister(before_backends[i]);
+
+        for _ in 0..10 {
+            let Some(choice) = p.pick(tenant_id) else {
+                bail!("could not route request for {tenant_id:?}")
+            };
+            if s.backends.get(&choice).unwrap() != &Health::Up {
+                bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
+            }
+            touched.insert(choice);
+        }
+    }
+
+    if touched.len() > fleet_size {
+        bail!("over the course of the deploy, tenant 0 sprawled out to more than {fleet_size} backends ({})", touched.len());
     }
     Ok(())
 }
