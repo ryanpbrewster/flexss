@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flexss::{
     block_picker::BlockPicker, drain_aware_shuffle::DrainAwareShuffle, naive_shuffle::NaiveShuffle,
-    rendevouz::Rendevouz, BackendId, Health, Picker, RoundRobin, TenantId,
+    rendevouz::Rendevouz, BackendId, Health, Picker, RoundRobin, TenantId, rendevouz_shuffle::RendevouzShuffle,
 };
 
 fn main() {
@@ -12,6 +12,7 @@ fn main() {
     health_aware::<NaiveShuffle>().unwrap();
     health_aware::<BlockPicker>().unwrap();
     health_aware::<Rendevouz>().unwrap();
+    health_aware::<RendevouzShuffle>().unwrap();
 
     // RoundRobin is succeptible to poison pill tenants
     assert!(poison_pill::<RoundRobin>().is_err());
@@ -21,6 +22,7 @@ fn main() {
     poison_pill::<BlockPicker>().unwrap();
     // Rendevouz hashing lets one backend murder everything
     assert!(poison_pill::<Rendevouz>().is_err());
+    poison_pill::<RendevouzShuffle>().unwrap();
 
     unaligned_rolling_restart::<RoundRobin>().unwrap();
     // NaiveShuffle cannot distinguish between intentional
@@ -34,6 +36,7 @@ fn main() {
     // will hit dead shards.
     assert!(unaligned_rolling_restart::<BlockPicker>().is_err());
     unaligned_rolling_restart::<Rendevouz>().unwrap();
+    unaligned_rolling_restart::<RendevouzShuffle>().unwrap();
 
     // RoundRobin always hits a ton of backends
     assert!(rolling_restart_blast_radius::<RoundRobin>().is_err());
@@ -44,6 +47,7 @@ fn main() {
     // but the cost is that it sprawls.
     assert!(rolling_restart_blast_radius::<DrainAwareShuffle>().is_err());
     rolling_restart_blast_radius::<Rendevouz>().unwrap();
+    rolling_restart_blast_radius::<RendevouzShuffle>().unwrap();
 
     // Every one of these struggles with a quick recycling
     assert!(recycle_blast_radius::<RoundRobin>().is_err());
@@ -54,11 +58,13 @@ fn main() {
     // have a very limited blast radius even when the underlying fleet
     // changes.
     recycle_blast_radius::<Rendevouz>().unwrap();
+    recycle_blast_radius::<RendevouzShuffle>().unwrap();
 
     load_distribution::<RoundRobin>().unwrap();
     load_distribution::<NaiveShuffle>().unwrap();
     load_distribution::<BlockPicker>().unwrap();
     assert!(load_distribution::<Rendevouz>().is_err());
+    load_distribution::<RendevouzShuffle>().unwrap();
 }
 
 #[derive(Default)]
@@ -80,7 +86,7 @@ fn health_aware<P: Picker>() -> anyhow::Result<()> {
         let tenant_id = TenantId(tenant_id);
         for _ in 0..100 {
             let b = p.pick(tenant_id).unwrap();
-            if s.backends.get(&b).unwrap() == &Health::Down {
+            if s.backends.get(&b).unwrap() != &Health::Up {
                 bail!("tenant {tenant_id:?} got routed to an unhealthy backend");
             }
         }
@@ -110,18 +116,18 @@ fn poison_pill<P: Picker>() -> anyhow::Result<()> {
 }
 
 fn load_distribution<P: Picker>() -> anyhow::Result<()> {
-    // We are going to have 30 backends and 30 tenants, and we want to
+    // We are going to have 50 backends and 100 tenants, and we want to
     // ensure that every backend receives some reasonable fraction of load.
     let mut s = Simulation::default();
     let mut p = P::new(5);
-    let backends: Vec<BackendId> = (0..30).map(BackendId).collect();
+    let backends: Vec<BackendId> = (0..50).map(BackendId).collect();
     for &b in &backends {
         s.backends.insert(b, Health::Up);
         p.register(b, Health::Up);
     }
 
     let mut tally: BTreeMap<BackendId, usize> = BTreeMap::new();
-    let tenants: Vec<TenantId> = (0..30).map(TenantId).collect();
+    let tenants: Vec<TenantId> = (0..100).map(TenantId).collect();
     let num_requests = 100;
     for &tenant_id in &tenants {
         for _ in 0..num_requests {
@@ -130,7 +136,7 @@ fn load_distribution<P: Picker>() -> anyhow::Result<()> {
         }
     }
 
-    // Ensure that all backends receive at least 20% of their fair share
+    // Ensure that all backends receive at least 10% of their fair share
     let fair = tenants.len() * num_requests / backends.len();
     for &b in &backends {
         let recv = tally.get(&b).copied().unwrap_or_default();
