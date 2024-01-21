@@ -36,7 +36,7 @@ impl Picker for RendevouzShuffle {
         assert!(self.backends.len() >= self.shard_size);
         let mut shard = BTreeMap::new();
         for i in 0 .. self.shard_size {
-            let best = self.backends.iter().filter(|b| !shard.contains_key(&b.id))
+            let best = self.backends.iter().filter(|b| b.health != Health::Draining && !shard.contains_key(&b.id))
                 .max_by_key(|b| {
                     let mut h = DefaultHasher::new();
                     i.hash(&mut h);

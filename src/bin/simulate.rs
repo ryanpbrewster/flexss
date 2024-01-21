@@ -171,7 +171,7 @@ fn unaligned_rolling_restart<P: Picker>() -> anyhow::Result<()> {
             p.register(b, Health::Draining);
         }
 
-        for tenant_id in 0..100 {
+        for tenant_id in 0..2_000 {
             let tenant_id = TenantId(tenant_id);
             for _ in 0..100 {
                 let Some(b) = p.pick(tenant_id) else {
