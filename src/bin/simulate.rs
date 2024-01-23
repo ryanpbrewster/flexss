@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flexss::{
     block_picker::BlockPicker, drain_aware_shuffle::DrainAwareShuffle, naive_shuffle::NaiveShuffle,
-    rendevouz::Rendevouz, BackendId, Health, Picker, RoundRobin, TenantId, rendevouz_shuffle::RendevouzShuffle,
+    rendevouz::Rendevouz, rendevouz_shuffle::RendevouzShuffle, BackendId, Health, Picker,
+    RoundRobin, TenantId,
 };
 
 fn main() {

@@ -9,9 +9,7 @@ fn rendevouz_shuffle(c: &mut Criterion) {
     }
     let tenant_id = TenantId(0);
     c.bench_function("rendevous_shuffle_pick", |b| {
-        b.iter(|| {
-            black_box(p.pick(tenant_id))
-        })
+        b.iter(|| black_box(p.pick(tenant_id)))
     });
 }
 

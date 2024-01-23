@@ -1,9 +1,10 @@
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap},
+    collections::{hash_map::DefaultHasher, BinaryHeap},
     hash::{Hash, Hasher},
+    ops::{Deref, DerefMut},
 };
 
-use rand::{rngs::SmallRng, SeedableRng, seq::SliceRandom};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{Backend, BackendId, Health, Picker, TenantId};
 
@@ -11,6 +12,7 @@ pub struct RendevouzShuffle {
     backends: Vec<Backend>,
     shard_size: usize,
     prng: SmallRng,
+    scratch: BinaryHeap<Entry>,
 }
 impl Picker for RendevouzShuffle {
     fn new(shard_size: usize) -> Self {
@@ -18,6 +20,7 @@ impl Picker for RendevouzShuffle {
             backends: Vec::new(),
             shard_size,
             prng: SmallRng::seed_from_u64(42),
+            scratch: BinaryHeap::with_capacity(shard_size),
         }
     }
     fn register(&mut self, id: BackendId, health: Health) {
@@ -34,21 +37,49 @@ impl Picker for RendevouzShuffle {
 
     fn pick(&mut self, id: TenantId) -> Option<BackendId> {
         assert!(self.backends.len() >= self.shard_size);
-        let mut shard = BTreeMap::new();
-        for i in 0 .. self.shard_size {
-            let best = self.backends.iter().filter(|b| b.health != Health::Draining && !shard.contains_key(&b.id))
-                .max_by_key(|b| {
-                    let mut h = DefaultHasher::new();
-                    i.hash(&mut h);
-                    id.hash(&mut h);
-                    b.id.hash(&mut h);
-                    h.finish()
-                })?;
-            shard.insert(best.id, best.health);
+        self.scratch.clear();
+        for &b in &self.backends {
+            if b.health == Health::Draining {
+                continue;
+            }
+            let score = {
+                let mut h = DefaultHasher::new();
+                id.hash(&mut h);
+                b.id.hash(&mut h);
+                h.finish()
+            };
+            if self.scratch.len() < self.shard_size {
+                self.scratch.push(Entry { score, b });
+            } else {
+                let mut cur = self.scratch.peek_mut().unwrap();
+                if score < cur.deref().score {
+                    *cur.deref_mut() = Entry { score, b };
+                }
+            }
         }
-
-        let mut healthy: Vec<BackendId> = shard.into_iter().filter(|&(_b, h)| h == Health::Up).map(|(b, _h)| b).collect();
-        healthy.sort();
-        healthy.choose(&mut self.prng).copied()
+        let healthy = self
+            .scratch
+            .iter()
+            .filter(|e| e.b.health == Health::Up)
+            .count();
+        if healthy == 0 {
+            None
+        } else {
+            Some(
+                self.scratch
+                    .iter()
+                    .filter(|e| e.b.health == Health::Up)
+                    .nth(self.prng.gen_range(0..healthy))
+                    .unwrap()
+                    .b
+                    .id,
+            )
+        }
     }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Entry {
+    score: u64,
+    b: Backend,
 }
