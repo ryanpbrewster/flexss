@@ -4,8 +4,8 @@ use flexss::{rendevouz_shuffle::RendevouzShuffle, BackendId, Health, Picker, Ten
 fn rendevouz_shuffle(c: &mut Criterion) {
     for (name, n, k) in [
         ("large", 1_000, 100),
-        // ("midsize", 200, 20),
-        // ("small", 30, 6),
+        ("midsize", 200, 20),
+        ("small", 30, 6),
     ] {
         let mut p = RendevouzShuffle::new(k);
         let backends: Vec<BackendId> = (0..n).map(BackendId).collect();
