@@ -8,3 +8,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.79"
 rand = { version = "0.8.5", features = ["small_rng"] }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
