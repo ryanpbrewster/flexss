@@ -41,7 +41,15 @@ impl Picker for RendevouzShuffle {
         let th = hash(id);
 
         self.scratch.clear();
-        self.scratch.extend(self.backends[..self.shard_size].iter().copied().map(|b| Entry { score: combine(th, b.hash), b }));
+        self.scratch.extend(
+            self.backends[..self.shard_size]
+                .iter()
+                .copied()
+                .map(|b| Entry {
+                    score: combine(th, b.hash),
+                    b,
+                }),
+        );
         rebuild_heap(&mut self.scratch);
         for &b in &self.backends[self.shard_size..] {
             if b.health == Health::Draining {
@@ -82,9 +90,9 @@ struct Entry {
 }
 
 fn sift_down<T: Ord>(xs: &mut [T], mut cur: usize) {
-    let mut child = 2*cur + 1;
+    let mut child = 2 * cur + 1;
     let end = xs.len();
-    while child < end.saturating_sub(2){
+    while child < end.saturating_sub(2) {
         child += (xs[child] <= xs[child + 1]) as usize;
         if xs[cur] >= xs[child] {
             return;
