@@ -1,4 +1,4 @@
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
 use crate::{combine, hash, Backend, BackendId, Health, Picker, TenantId};
 
@@ -40,6 +40,16 @@ impl Picker for RendevouzShuffle {
 
         let th = hash(id);
         self.backends.select_nth_unstable_by_key(self.shard_size, |b| combine(th, b.hash));
+
+        // Try to find a healthy endpoint. If we get lucky, we can save ourselves the trouble of counting them.
+        for _ in 0 .. 2 {
+            let choice = self.backends[..self.shard_size].choose(&mut self.prng).unwrap();
+            if choice.health == Health::Up {
+                return Some(choice.id);
+            }
+        }
+        // If we don't get lucky, brute-force the problem. Filter out all the unhealthy backends, then choose one of the
+        // remaining healthy ones.
         let healthy = self
             .backends[..self.shard_size]
             .iter()
