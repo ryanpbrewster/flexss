@@ -12,6 +12,10 @@ rand = { version = "0.8.5", features = ["small_rng"] }
 [dev-dependencies]
 criterion = "0.5.1"
 
+[profile.bench]
+debug = true
+
 [[bench]]
 name = "my_benchmark"
 harness = false
+
