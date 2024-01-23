@@ -1,7 +1,4 @@
-use std::{
-    collections::BinaryHeap,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
 
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
@@ -11,7 +8,7 @@ pub struct RendevouzShuffle {
     backends: Vec<Backend>,
     shard_size: usize,
     prng: SmallRng,
-    scratch: BinaryHeap<Entry>,
+    scratch: Vec<Entry>,
 }
 impl Picker for RendevouzShuffle {
     fn new(shard_size: usize) -> Self {
@@ -19,7 +16,7 @@ impl Picker for RendevouzShuffle {
             backends: Vec::new(),
             shard_size,
             prng: SmallRng::seed_from_u64(42),
-            scratch: BinaryHeap::with_capacity(shard_size),
+            scratch: Vec::with_capacity(shard_size),
         }
     }
     fn register(&mut self, id: BackendId, health: Health) {
@@ -44,18 +41,17 @@ impl Picker for RendevouzShuffle {
         let th = hash(id);
 
         self.scratch.clear();
-        for &b in &self.backends {
+        self.scratch.extend(self.backends[..self.shard_size].iter().copied().map(|b| Entry { score: combine(th, b.hash), b }));
+        rebuild_heap(&mut self.scratch);
+        for &b in &self.backends[self.shard_size..] {
             if b.health == Health::Draining {
                 continue;
             }
             let score = combine(th, b.hash);
-            if self.scratch.len() < self.shard_size {
-                self.scratch.push(Entry { score, b });
-            } else {
-                let mut cur = self.scratch.peek_mut().unwrap();
-                if score < cur.deref().score {
-                    *cur.deref_mut() = Entry { score, b };
-                }
+
+            if score < self.scratch[0].score {
+                self.scratch[0] = Entry { score, b };
+                sift_down(&mut self.scratch, 0);
             }
         }
         let healthy = self
@@ -79,8 +75,45 @@ impl Picker for RendevouzShuffle {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Entry {
     score: u64,
     b: Backend,
+}
+
+fn sift_down<T: Ord>(xs: &mut [T], mut cur: usize) {
+    let mut child = 2*cur + 1;
+    let end = xs.len();
+    while child < end.saturating_sub(2){
+        child += (xs[child] <= xs[child + 1]) as usize;
+        if xs[cur] >= xs[child] {
+            return;
+        }
+
+        xs.swap(cur, child);
+        cur = child;
+        child = 2 * cur + 1;
+    }
+    if child < xs.len() && xs[cur] < xs[child] {
+        xs.swap(cur, child);
+    }
+}
+fn rebuild_heap<T: Ord + Debug>(xs: &mut [T]) {
+    let mut n = xs.len() / 2;
+    while n > 0 {
+        n -= 1;
+        sift_down(xs, n);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::rebuild_heap;
+
+    #[test]
+    fn rebuild_test() {
+        let mut xs = [3, 1, 4, 1, 5, 9, 2, 6];
+        rebuild_heap(&mut xs);
+        assert_eq!(xs, [9, 6, 4, 1, 5, 3, 2, 1]);
+    }
 }
