@@ -1,6 +1,6 @@
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
-use crate::{Backend, BackendId, Health, Picker, TenantId};
+use crate::{hash, Backend, BackendId, Health, Picker, TenantId};
 
 pub struct NaiveShuffle {
     backends: Vec<Backend>,
@@ -19,7 +19,11 @@ impl Picker for NaiveShuffle {
         if let Some(existing) = self.backends.iter_mut().find(|b| b.id == id) {
             existing.health = health;
         } else {
-            self.backends.push(Backend { id, health });
+            self.backends.push(Backend {
+                id,
+                health,
+                hash: hash(id),
+            });
             self.backends.sort();
         }
     }

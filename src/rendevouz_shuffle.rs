@@ -1,12 +1,11 @@
 use std::{
-    collections::{hash_map::DefaultHasher, BinaryHeap},
-    hash::{Hash, Hasher},
+    collections::BinaryHeap,
     ops::{Deref, DerefMut},
 };
 
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use crate::{Backend, BackendId, Health, Picker, TenantId};
+use crate::{combine, hash, Backend, BackendId, Health, Picker, TenantId};
 
 pub struct RendevouzShuffle {
     backends: Vec<Backend>,
@@ -27,7 +26,11 @@ impl Picker for RendevouzShuffle {
         if let Some(existing) = self.backends.iter_mut().find(|b| b.id == id) {
             existing.health = health;
         } else {
-            self.backends.push(Backend { id, health });
+            self.backends.push(Backend {
+                id,
+                health,
+                hash: hash(id),
+            });
         }
     }
 
@@ -37,17 +40,15 @@ impl Picker for RendevouzShuffle {
 
     fn pick(&mut self, id: TenantId) -> Option<BackendId> {
         assert!(self.backends.len() >= self.shard_size);
+
+        let th = hash(id);
+
         self.scratch.clear();
         for &b in &self.backends {
             if b.health == Health::Draining {
                 continue;
             }
-            let score = {
-                let mut h = DefaultHasher::new();
-                id.hash(&mut h);
-                b.id.hash(&mut h);
-                h.finish()
-            };
+            let score = combine(th, b.hash);
             if self.scratch.len() < self.shard_size {
                 self.scratch.push(Entry { score, b });
             } else {

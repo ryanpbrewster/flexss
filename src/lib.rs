@@ -1,3 +1,5 @@
+use std::{collections::hash_map::DefaultHasher, hash::Hasher, ops::BitXor};
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
 pub struct TenantId(pub u64);
 
@@ -15,6 +17,7 @@ pub enum Health {
 pub struct Backend {
     id: BackendId,
     health: Health,
+    hash: u64,
 }
 
 pub trait Picker {
@@ -39,7 +42,11 @@ impl Picker for RoundRobin {
         if let Some(existing) = self.backends.iter_mut().find(|b| b.id == id) {
             existing.health = health;
         } else {
-            self.backends.push(Backend { id, health });
+            self.backends.push(Backend {
+                id,
+                health,
+                hash: hash(id),
+            });
         }
     }
 
@@ -68,3 +75,17 @@ pub mod drain_aware_shuffle;
 pub mod naive_shuffle;
 pub mod rendevouz;
 pub mod rendevouz_shuffle;
+
+/// Taken from FxHash, this is a mediocre quality (but extremely fast!) way to
+/// combine two hash values.
+pub(crate) fn combine(a: u64, b: u64) -> u64 {
+    const K: u64 = 0x517cc1b727220a95;
+    a.rotate_left(5).bitxor(b).wrapping_mul(K)
+}
+
+/// This uses the hash_map default (should be SipHash 1-3 as of 2024-01).
+pub(crate) fn hash<T: std::hash::Hash>(t: T) -> u64 {
+    let mut h = DefaultHasher::new();
+    t.hash(&mut h);
+    h.finish()
+}
